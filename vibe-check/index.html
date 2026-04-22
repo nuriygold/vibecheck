@@ -1,0 +1,693 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Vibe Check — Room Frequency Tuner</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #050508;
+      color: #e2e8f0;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+    .noise {
+      position: fixed; inset: 0; pointer-events: none; z-index: 0;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+      opacity: 0.4;
+    }
+    @keyframes pulse-ring {
+      0% { transform: scale(0.8); opacity: 0.8; }
+      100% { transform: scale(2.2); opacity: 0; }
+    }
+    @keyframes float {
+      0%, 100% { transform: translateY(0px); }
+      50% { transform: translateY(-8px); }
+    }
+    @keyframes shimmer {
+      0% { background-position: -200% center; }
+      100% { background-position: 200% center; }
+    }
+    @keyframes bar-grow {
+      from { transform: scaleY(0); }
+      to { transform: scaleY(1); }
+    }
+    @keyframes glow-pulse {
+      0%, 100% { box-shadow: 0 0 20px var(--glow-color, #7c3aed); }
+      50% { box-shadow: 0 0 40px var(--glow-color, #7c3aed), 0 0 80px var(--glow-color, #7c3aed); }
+    }
+    @keyframes dog-ear-pulse {
+      0%, 100% { opacity: 0.4; transform: scale(1); }
+      50% { opacity: 1; transform: scale(1.15); }
+    }
+    .spectrum-bar {
+      transform-origin: bottom;
+      transition: height 0.05s ease-out;
+    }
+    .archetype-name {
+      background: linear-gradient(90deg, #a78bfa, #f472b6, #60a5fa, #a78bfa);
+      background-size: 200% auto;
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      animation: shimmer 3s linear infinite;
+    }
+    .btn-primary {
+      background: linear-gradient(135deg, #7c3aed, #4f46e5);
+      border: none; border-radius: 12px;
+      color: white; cursor: pointer;
+      font-size: 16px; font-weight: 600;
+      padding: 14px 32px;
+      transition: all 0.2s;
+      position: relative; overflow: hidden;
+    }
+    .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 8px 25px rgba(124,58,237,0.4); }
+    .btn-primary:active { transform: translateY(0); }
+    .btn-stop {
+      background: linear-gradient(135deg, #dc2626, #9f1239);
+    }
+    .btn-stop:hover { box-shadow: 0 8px 25px rgba(220,38,38,0.4); }
+    .card {
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 20px;
+      backdrop-filter: blur(12px);
+    }
+    .dog-ear-active {
+      animation: dog-ear-pulse 0.5s ease-in-out infinite;
+    }
+    input[type="text"], input[type="password"] {
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 10px;
+      color: #e2e8f0;
+      font-size: 14px;
+      padding: 10px 14px;
+      width: 100%;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    input[type="text"]:focus, input[type="password"]:focus {
+      border-color: rgba(124,58,237,0.6);
+    }
+    input::placeholder { color: rgba(255,255,255,0.3); }
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: rgba(124,58,237,0.4); border-radius: 3px; }
+  </style>
+</head>
+<body>
+  <div class="noise"></div>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef, useCallback } = React;
+
+    // ─── Constants ───────────────────────────────────────────────────
+    const FFT_SIZE = 2048;
+    const SAMPLE_RATE = 44100;
+    const NUM_BARS = 80;
+
+    const BANDS = {
+      sub:      [20,   60],
+      bass:     [60,   250],
+      lowMid:   [250,  500],
+      mid:      [500,  2000],
+      highMid:  [2000, 4000],
+      presence: [4000, 6000],
+      air:      [6000, 12000],
+      ultra:    [12000, 20000],
+    };
+
+    const ARCHETYPES = [
+      {
+        id: 'humming-hive',
+        name: 'Humming Hive',
+        emoji: '🐝',
+        color: '#f59e0b',
+        glow: '#f59e0b',
+        description: 'Your space buzzes with collective energy. The mid-range frequencies sing of human presence — conversations, movement, the electric hum of minds at work.',
+        ritual: 'Play 432Hz tones to harmonize the collective frequency. Let the hum work for you.',
+        test: (b) => b.mid > 40 && b.mid >= b.bass && b.mid >= b.presence,
+      },
+      {
+        id: 'hissing-lab',
+        name: 'Hissing Lab',
+        emoji: '⚗️',
+        color: '#06b6d4',
+        glow: '#06b6d4',
+        description: 'Clinical precision fills this air. High-frequency energy from machines and fluorescent light creates an environment of sharp angles and focused thought.',
+        ritual: 'Introduce a 528Hz crystal bowl sound to soften the clinical edge. Add warmth.',
+        test: (b) => b.presence > 35 && b.presence >= b.mid && b.presence >= b.bass,
+      },
+      {
+        id: 'soft-field',
+        name: 'Soft Field',
+        emoji: '🌿',
+        color: '#10b981',
+        glow: '#22c55e',
+        description: 'Grounded in the earth\'s own rhythm. Bass frequencies wrap around you like soil and stone — this is a space of deep rest and primal comfort.',
+        ritual: 'Open a window. Let higher frequencies breathe in and balance the weight.',
+        test: (b) => b.bass > 40 && b.bass >= b.mid && b.bass >= b.presence,
+      },
+      {
+        id: 'electric-pulse',
+        name: 'Electric Pulse',
+        emoji: '⚡',
+        color: '#8b5cf6',
+        glow: '#7c3aed',
+        description: 'The grid speaks. 60Hz hum of infrastructure runs through the walls — you are inside the machine, hearing its heartbeat.',
+        ritual: 'Unplug what doesn\'t need power. Reduce the machine\'s voice. Reclaim your space.',
+        test: (b) => b.sub > 45 && b.sub >= b.bass,
+      },
+      {
+        id: 'resonant-cave',
+        name: 'Resonant Cave',
+        emoji: '🗿',
+        color: '#ef4444',
+        glow: '#dc2626',
+        description: 'This space amplifies itself. Natural resonance builds in a loop — you are inside a living acoustic instrument.',
+        ritual: 'Sing a single note. Feel where the room answers back. That is the cave\'s key.',
+        test: (b) => b.lowMid > 40 && b.lowMid >= b.mid,
+      },
+      {
+        id: 'dead-chamber',
+        name: 'Dead Chamber',
+        emoji: '🌌',
+        color: '#64748b',
+        glow: '#475569',
+        description: 'Remarkable stillness. Sound absorbs and disappears — a meditation chamber, a recording studio, a moment between breaths.',
+        ritual: 'Clap once. Count the echoes. There are none. This silence is your gift.',
+        test: (b) => true, // fallback
+      },
+    ];
+
+    // ─── Audio Engine ─────────────────────────────────────────────────
+    class AudioEngine {
+      constructor() {
+        this.ctx = null;
+        this.analyser = null;
+        this.source = null;
+        this.stream = null;
+        this.dataArray = null;
+      }
+
+      async start() {
+        this.stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+        this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+        this.analyser = this.ctx.createAnalyser();
+        this.analyser.fftSize = FFT_SIZE;
+        this.analyser.smoothingTimeConstant = 0.8;
+        this.source = this.ctx.createMediaStreamSource(this.stream);
+        this.source.connect(this.analyser);
+        this.dataArray = new Uint8Array(this.analyser.frequencyBinCount);
+      }
+
+      getSpectrum() {
+        if (!this.analyser) return new Uint8Array(FFT_SIZE / 2);
+        this.analyser.getByteFrequencyData(this.dataArray);
+        return this.dataArray;
+      }
+
+      getBandEnergy(loHz, hiHz) {
+        if (!this.analyser) return 0;
+        const nyq = this.ctx.sampleRate / 2;
+        const binCount = this.analyser.frequencyBinCount;
+        const loIdx = Math.floor((loHz / nyq) * binCount);
+        const hiIdx = Math.ceil((hiHz / nyq) * binCount);
+        let sum = 0, count = 0;
+        for (let i = loIdx; i <= hiIdx && i < binCount; i++) {
+          sum += this.dataArray[i];
+          count++;
+        }
+        return count > 0 ? sum / count : 0;
+      }
+
+      getAllBandEnergies() {
+        return Object.fromEntries(
+          Object.entries(BANDS).map(([k, [lo, hi]]) => [k, this.getBandEnergy(lo, hi)])
+        );
+      }
+
+      stop() {
+        if (this.source) this.source.disconnect();
+        if (this.stream) this.stream.getTracks().forEach(t => t.stop());
+        if (this.ctx) this.ctx.close();
+        this.ctx = null; this.analyser = null; this.source = null; this.stream = null;
+      }
+    }
+
+    // ─── Spectrum Display ─────────────────────────────────────────────
+    function SpectrumDisplay({ spectrum, archetype, isListening }) {
+      const color = archetype?.color || '#7c3aed';
+
+      const bars = [];
+      if (spectrum && spectrum.length > 0) {
+        const step = Math.floor(spectrum.length * 0.7 / NUM_BARS);
+        for (let i = 0; i < NUM_BARS; i++) {
+          const val = spectrum[i * step] || 0;
+          const h = Math.max(2, (val / 255) * 100);
+          const hue = (i / NUM_BARS) * 200 + 180;
+          bars.push({ h, hue });
+        }
+      } else {
+        for (let i = 0; i < NUM_BARS; i++) {
+          bars.push({ h: 2 + Math.random() * 3, hue: (i / NUM_BARS) * 200 + 180 });
+        }
+      }
+
+      return (
+        <div style={{
+          display: 'flex', alignItems: 'flex-end', gap: '2px',
+          height: '120px', width: '100%', padding: '0 4px',
+        }}>
+          {bars.map((bar, i) => (
+            <div
+              key={i}
+              className="spectrum-bar"
+              style={{
+                flex: 1,
+                height: `${bar.h}%`,
+                background: isListening
+                  ? `hsl(${bar.hue}, 80%, 60%)`
+                  : 'rgba(255,255,255,0.15)',
+                borderRadius: '2px 2px 0 0',
+                minHeight: '2px',
+              }}
+            />
+          ))}
+        </div>
+      );
+    }
+
+    // ─── Dog Ear Meter ────────────────────────────────────────────────
+    function DogEarMeter({ energy }) {
+      const level = Math.min(100, (energy / 128) * 100);
+      const isActive = energy > 20;
+
+      return (
+        <div className="card" style={{ padding: '16px', position: 'relative' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
+            <span style={{ fontSize: '20px' }} className={isActive ? 'dog-ear-active' : ''}>🐕</span>
+            <div>
+              <div style={{ fontSize: '12px', fontWeight: '700', letterSpacing: '0.1em', color: '#a78bfa' }}>
+                DOG EAR MODE
+              </div>
+              <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.4)' }}>
+                16–20 kHz ultrasonic band
+              </div>
+            </div>
+            {isActive && (
+              <div style={{
+                marginLeft: 'auto',
+                background: '#7c3aed',
+                borderRadius: '20px',
+                padding: '2px 10px',
+                fontSize: '11px',
+                fontWeight: '700',
+                color: 'white',
+              }}>
+                DETECTED
+              </div>
+            )}
+          </div>
+          <div style={{
+            height: '8px',
+            background: 'rgba(255,255,255,0.08)',
+            borderRadius: '4px',
+            overflow: 'hidden',
+          }}>
+            <div style={{
+              height: '100%',
+              width: `${level}%`,
+              background: isActive
+                ? 'linear-gradient(90deg, #7c3aed, #c084fc)'
+                : 'rgba(255,255,255,0.2)',
+              borderRadius: '4px',
+              transition: 'width 0.1s ease-out',
+            }} />
+          </div>
+          <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.3)', marginTop: '6px' }}>
+            {isActive
+              ? 'Ultrasonic energy present — pest repellers, CRT monitors, or electronics nearby'
+              : 'No significant ultrasonic activity detected'}
+          </div>
+        </div>
+      );
+    }
+
+    // ─── Archetype Card ───────────────────────────────────────────────
+    function ArchetypeCard({ archetype, bandEnergies }) {
+      if (!archetype) return null;
+      return (
+        <div className="card" style={{
+          padding: '28px',
+          borderColor: `${archetype.color}30`,
+          position: 'relative',
+          overflow: 'hidden',
+          '--glow-color': archetype.glow,
+          animation: 'glow-pulse 3s ease-in-out infinite',
+        }}>
+          <div style={{
+            position: 'absolute', inset: 0,
+            background: `radial-gradient(ellipse at top left, ${archetype.color}15, transparent 70%)`,
+            pointerEvents: 'none',
+          }} />
+          <div style={{ position: 'relative', zIndex: 1 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
+              <span style={{ fontSize: '40px', animation: 'float 4s ease-in-out infinite' }}>
+                {archetype.emoji}
+              </span>
+              <div>
+                <div style={{ fontSize: '11px', letterSpacing: '0.15em', color: 'rgba(255,255,255,0.4)', marginBottom: '4px' }}>
+                  ROOM ARCHETYPE
+                </div>
+                <div className="archetype-name" style={{ fontSize: '28px', fontWeight: '800' }}>
+                  {archetype.name}
+                </div>
+              </div>
+            </div>
+            <p style={{ color: 'rgba(255,255,255,0.7)', lineHeight: '1.6', marginBottom: '16px', fontSize: '15px' }}>
+              {archetype.description}
+            </p>
+            <div style={{
+              background: `${archetype.color}18`,
+              border: `1px solid ${archetype.color}30`,
+              borderRadius: '12px',
+              padding: '12px 16px',
+            }}>
+              <div style={{ fontSize: '11px', letterSpacing: '0.1em', color: archetype.color, marginBottom: '4px', fontWeight: '700' }}>
+                FREQUENCY RITUAL
+              </div>
+              <div style={{ fontSize: '14px', color: 'rgba(255,255,255,0.8)' }}>
+                {archetype.ritual}
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ─── Band Meters ──────────────────────────────────────────────────
+    function BandMeter({ label, value, color }) {
+      const pct = Math.min(100, (value / 255) * 100);
+      return (
+        <div style={{ marginBottom: '8px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', marginBottom: '4px' }}>
+            <span style={{ color: 'rgba(255,255,255,0.5)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>{label}</span>
+            <span style={{ color: 'rgba(255,255,255,0.3)', fontVariantNumeric: 'tabular-nums' }}>
+              {Math.round(pct)}%
+            </span>
+          </div>
+          <div style={{ height: '4px', background: 'rgba(255,255,255,0.08)', borderRadius: '2px', overflow: 'hidden' }}>
+            <div style={{
+              height: '100%', width: `${pct}%`,
+              background: color,
+              borderRadius: '2px',
+              transition: 'width 0.08s ease-out',
+            }} />
+          </div>
+        </div>
+      );
+    }
+
+    // ─── Narration Box ────────────────────────────────────────────────
+    function NarrationBox({ archetype, apiKey, onApiKeyChange }) {
+      const [narration, setNarration] = useState('');
+      const [loading, setLoading] = useState(false);
+      const [error, setError] = useState('');
+
+      const fetchNarration = async () => {
+        if (!apiKey) { setError('Enter your Anthropic API key above to unlock narration.'); return; }
+        if (!archetype) { setError('Start listening first to detect a room archetype.'); return; }
+        setLoading(true); setError(''); setNarration('');
+        try {
+          const res = await fetch('https://api.anthropic.com/v1/messages', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-api-key': apiKey,
+              'anthropic-version': '2023-06-01',
+            },
+            body: JSON.stringify({
+              model: 'claude-3-haiku-20240307',
+              max_tokens: 200,
+              messages: [{
+                role: 'user',
+                content: `You are a mystical frequency poet. The room has been analyzed and its archetype is "${archetype.name}" — ${archetype.description} Write one short, poetic, atmospheric paragraph (3-4 sentences) describing the spiritual and energetic quality of this space right now. Be evocative, specific, and slightly mysterious. Do not use the archetype name directly.`,
+              }],
+            }),
+          });
+          if (!res.ok) throw new Error(`API error ${res.status}`);
+          const data = await res.json();
+          setNarration(data.content?.[0]?.text || '');
+        } catch (e) {
+          setError(`Could not reach Claude API. This may require a CORS-enabled proxy in production. Error: ${e.message}`);
+        }
+        setLoading(false);
+      };
+
+      return (
+        <div className="card" style={{ padding: '20px' }}>
+          <div style={{ fontSize: '11px', letterSpacing: '0.1em', color: '#a78bfa', fontWeight: '700', marginBottom: '12px' }}>
+            CLAUDE NARRATION
+          </div>
+          <div style={{ marginBottom: '12px' }}>
+            <input
+              type="password"
+              placeholder="sk-ant-... Anthropic API key (stays local)"
+              value={apiKey}
+              onChange={e => onApiKeyChange(e.target.value)}
+            />
+          </div>
+          <button
+            className="btn-primary"
+            onClick={fetchNarration}
+            disabled={loading}
+            style={{ width: '100%', opacity: loading ? 0.7 : 1 }}
+          >
+            {loading ? '✦ Reading the room...' : '✦ Narrate this space'}
+          </button>
+          {narration && (
+            <p style={{
+              marginTop: '16px',
+              color: 'rgba(255,255,255,0.8)',
+              lineHeight: '1.7',
+              fontSize: '15px',
+              fontStyle: 'italic',
+              borderLeft: '2px solid rgba(167,139,250,0.4)',
+              paddingLeft: '14px',
+            }}>
+              {narration}
+            </p>
+          )}
+          {error && (
+            <p style={{ marginTop: '12px', color: '#f87171', fontSize: '13px' }}>{error}</p>
+          )}
+        </div>
+      );
+    }
+
+    // ─── Main App ─────────────────────────────────────────────────────
+    function App() {
+      const [isListening, setIsListening] = useState(false);
+      const [spectrum, setSpectrum] = useState(null);
+      const [bandEnergies, setBandEnergies] = useState({});
+      const [archetype, setArchetype] = useState(null);
+      const [ultraEnergy, setUltraEnergy] = useState(0);
+      const [apiKey, setApiKey] = useState('');
+      const [error, setError] = useState('');
+      const engineRef = useRef(null);
+      const rafRef = useRef(null);
+      const archetypeHistoryRef = useRef([]);
+
+      const detectArchetype = useCallback((bands) => {
+        for (const a of ARCHETYPES) {
+          if (a.id !== 'dead-chamber' && a.test(bands)) return a;
+        }
+        return ARCHETYPES.find(a => a.id === 'dead-chamber');
+      }, []);
+
+      const tick = useCallback(() => {
+        const engine = engineRef.current;
+        if (!engine || !engine.analyser) return;
+        const spec = new Uint8Array(engine.getSpectrum());
+        const bands = engine.getAllBandEnergies();
+        const ultra = engine.getBandEnergy(16000, 20000);
+        setSpectrum(spec);
+        setBandEnergies(bands);
+        setUltraEnergy(ultra);
+        // Smooth archetype detection via history
+        const detected = detectArchetype(bands);
+        archetypeHistoryRef.current.push(detected.id);
+        if (archetypeHistoryRef.current.length > 30) archetypeHistoryRef.current.shift();
+        const counts = {};
+        archetypeHistoryRef.current.forEach(id => { counts[id] = (counts[id] || 0) + 1; });
+        const dominantId = Object.entries(counts).sort((a, b) => b[1] - a[1])[0]?.[0];
+        const stable = ARCHETYPES.find(a => a.id === dominantId) || detected;
+        setArchetype(stable);
+        rafRef.current = requestAnimationFrame(tick);
+      }, [detectArchetype]);
+
+      const startListening = async () => {
+        setError('');
+        try {
+          const engine = new AudioEngine();
+          await engine.start();
+          engineRef.current = engine;
+          archetypeHistoryRef.current = [];
+          setIsListening(true);
+          rafRef.current = requestAnimationFrame(tick);
+        } catch (e) {
+          setError('Microphone access denied. Please allow mic access and try again.');
+        }
+      };
+
+      const stopListening = () => {
+        if (rafRef.current) cancelAnimationFrame(rafRef.current);
+        if (engineRef.current) { engineRef.current.stop(); engineRef.current = null; }
+        setIsListening(false);
+        setSpectrum(null);
+        setBandEnergies({});
+        setArchetype(null);
+        setUltraEnergy(0);
+        archetypeHistoryRef.current = [];
+      };
+
+      useEffect(() => () => { stopListening(); }, []);
+
+      const bandColors = {
+        sub: '#6366f1', bass: '#8b5cf6', lowMid: '#a78bfa',
+        mid: '#f472b6', highMid: '#fb7185', presence: '#f97316',
+        air: '#facc15', ultra: '#4ade80',
+      };
+
+      return (
+        <div style={{ maxWidth: '780px', margin: '0 auto', padding: '24px 16px', position: 'relative', zIndex: 1 }}>
+          {/* Header */}
+          <div style={{ textAlign: 'center', marginBottom: '40px' }}>
+            <div style={{ fontSize: '13px', letterSpacing: '0.3em', color: 'rgba(255,255,255,0.3)', marginBottom: '12px' }}>
+              VIBE CHECK
+            </div>
+            <h1 style={{
+              fontSize: 'clamp(36px, 8vw, 64px)',
+              fontWeight: '900',
+              letterSpacing: '-0.02em',
+              lineHeight: '1',
+              background: 'linear-gradient(135deg, #e2e8f0 0%, #a78bfa 50%, #60a5fa 100%)',
+              WebkitBackgroundClip: 'text',
+              WebkitTextFillColor: 'transparent',
+              backgroundClip: 'text',
+              marginBottom: '12px',
+            }}>
+              Room Frequency<br />Tuner
+            </h1>
+            <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '16px', maxWidth: '420px', margin: '0 auto' }}>
+              What frequency is your space vibrating at? Let's find out.
+            </p>
+          </div>
+
+          {/* Spectrum Visualizer */}
+          <div className="card" style={{ padding: '20px 16px 0', marginBottom: '16px', overflow: 'hidden' }}>
+            <div style={{ fontSize: '11px', letterSpacing: '0.1em', color: 'rgba(255,255,255,0.3)', marginBottom: '12px', paddingLeft: '4px' }}>
+              FREQUENCY SPECTRUM — 20Hz to 20kHz
+            </div>
+            <SpectrumDisplay spectrum={spectrum} archetype={archetype} isListening={isListening} />
+            <div style={{
+              display: 'flex', justifyContent: 'space-between', fontSize: '10px',
+              color: 'rgba(255,255,255,0.2)', padding: '6px 4px 16px',
+            }}>
+              <span>SUB</span><span>BASS</span><span>MID</span><span>HIGH</span><span>AIR</span>
+            </div>
+          </div>
+
+          {/* Controls */}
+          <div style={{ textAlign: 'center', marginBottom: '20px' }}>
+            {error && (
+              <div style={{
+                background: 'rgba(220,38,38,0.15)', border: '1px solid rgba(220,38,38,0.3)',
+                borderRadius: '12px', padding: '12px 16px', marginBottom: '16px',
+                color: '#fca5a5', fontSize: '14px',
+              }}>
+                {error}
+              </div>
+            )}
+            {!isListening ? (
+              <button className="btn-primary" onClick={startListening} style={{ fontSize: '18px', padding: '16px 48px' }}>
+                ◉ Start Listening
+              </button>
+            ) : (
+              <button className="btn-primary btn-stop" onClick={stopListening} style={{ fontSize: '18px', padding: '16px 48px' }}>
+                ◼ Stop
+              </button>
+            )}
+          </div>
+
+          {/* Archetype + Band grid */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
+            <div style={{ gridColumn: '1 / -1' }}>
+              {archetype ? (
+                <ArchetypeCard archetype={archetype} bandEnergies={bandEnergies} />
+              ) : (
+                <div className="card" style={{ padding: '40px', textAlign: 'center', color: 'rgba(255,255,255,0.2)' }}>
+                  <div style={{ fontSize: '48px', marginBottom: '12px', opacity: 0.3 }}>◎</div>
+                  <div>Start listening to detect your room's archetype</div>
+                </div>
+              )}
+            </div>
+
+            {/* Band meters */}
+            <div className="card" style={{ padding: '20px' }}>
+              <div style={{ fontSize: '11px', letterSpacing: '0.1em', color: 'rgba(255,255,255,0.3)', marginBottom: '14px' }}>
+                FREQUENCY BANDS
+              </div>
+              {Object.entries(BANDS).map(([name]) => (
+                <BandMeter
+                  key={name}
+                  label={name}
+                  value={bandEnergies[name] || 0}
+                  color={bandColors[name]}
+                />
+              ))}
+            </div>
+
+            {/* Dog Ear */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <DogEarMeter energy={ultraEnergy} />
+              <div className="card" style={{ padding: '16px', flex: 1 }}>
+                <div style={{ fontSize: '11px', letterSpacing: '0.1em', color: 'rgba(255,255,255,0.3)', marginBottom: '10px' }}>
+                  ABOUT THIS READING
+                </div>
+                <div style={{ fontSize: '13px', color: 'rgba(255,255,255,0.5)', lineHeight: '1.6' }}>
+                  Your room's dominant frequencies reveal its acoustic character. Each space has a signature — a sonic fingerprint shaped by architecture, materials, and the energy within it.
+                  <br /><br />
+                  Archetypes update every ~1 second using a 30-frame moving window for stability.
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Claude Narration */}
+          <NarrationBox
+            archetype={archetype}
+            apiKey={apiKey}
+            onApiKeyChange={setApiKey}
+          />
+
+          {/* Footer */}
+          <div style={{ textAlign: 'center', marginTop: '40px', color: 'rgba(255,255,255,0.15)', fontSize: '12px' }}>
+            Built for Vibe&lt;ATL&gt; 2026 · Web Audio API · No backend · No tracking
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
