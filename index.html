@@ -550,6 +550,131 @@
       );
     }
 
+    // ─── Tone Player ─────────────────────────────────────────────────
+    function TonePlayer({ peakHz }) {
+      const [playingHz, setPlayingHz] = useState(null);
+      const oscRef  = useRef(null);
+      const gainRef = useRef(null);
+      const ctxRef  = useRef(null);
+
+      const stopTone = useCallback(() => {
+        if (gainRef.current && ctxRef.current) {
+          gainRef.current.gain.linearRampToValueAtTime(0, ctxRef.current.currentTime + 0.06);
+        }
+        setTimeout(() => {
+          try { oscRef.current?.stop(); }  catch {}
+          try { ctxRef.current?.close(); } catch {}
+          oscRef.current = null; gainRef.current = null; ctxRef.current = null;
+        }, 80);
+        setPlayingHz(null);
+      }, []);
+
+      const playTone = useCallback((hz) => {
+        stopTone();
+        // Small delay so the previous context has a moment to close cleanly
+        setTimeout(() => {
+          const ctx  = new (window.AudioContext || window.webkitAudioContext)();
+          const osc  = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(hz, ctx.currentTime);
+          gain.gain.setValueAtTime(0, ctx.currentTime);
+          gain.gain.linearRampToValueAtTime(0.16, ctx.currentTime + 0.06);
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.start();
+          ctxRef.current  = ctx;
+          oscRef.current  = osc;
+          gainRef.current = gain;
+          setPlayingHz(hz);
+        }, 90);
+      }, [stopTone]);
+
+      const toggle = useCallback((hz) => {
+        if (playingHz === hz) stopTone(); else playTone(hz);
+      }, [playingHz, playTone, stopTone]);
+
+      useEffect(() => () => stopTone(), []);
+
+      return (
+        <div className="card" style={{ padding: '20px', marginBottom: '16px' }}>
+          <div style={{ fontSize: '11px', letterSpacing: '0.1em', color: '#a78bfa', fontWeight: '700', marginBottom: '4px' }}>
+            TONE PLAYER
+          </div>
+          <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.25)', marginBottom: '16px' }}>
+            Pure sine wave at each Solfeggio frequency — tap to play, tap again to stop
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '7px' }}>
+            {CHAKRAS.map(c => {
+              const on = playingHz === c.hz;
+              return (
+                <button
+                  key={c.id}
+                  onClick={() => toggle(c.hz)}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: '12px',
+                    background: on ? `${c.color}1a` : 'rgba(255,255,255,0.03)',
+                    border: `1px solid ${on ? c.color + '55' : 'rgba(255,255,255,0.07)'}`,
+                    borderRadius: '12px', padding: '11px 16px', cursor: 'pointer',
+                    boxShadow: on ? `0 0 22px ${c.color}28` : 'none',
+                    transition: 'all 0.2s', textAlign: 'left',
+                  }}
+                >
+                  <span style={{ fontSize: '19px', width: '24px', textAlign: 'center' }}>{c.emoji}</span>
+                  <div style={{ flex: 1 }}>
+                    <span style={{ fontSize: '13px', fontWeight: '600', color: on ? c.color : 'rgba(255,255,255,0.75)' }}>
+                      {c.name}
+                    </span>
+                    <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.28)', marginLeft: '8px' }}>
+                      {c.sanskrit}
+                    </span>
+                  </div>
+                  <span style={{
+                    fontSize: '13px', fontWeight: '700', fontVariantNumeric: 'tabular-nums',
+                    color: on ? c.color : 'rgba(255,255,255,0.3)',
+                    minWidth: '52px', textAlign: 'right',
+                  }}>
+                    {c.hz} Hz
+                  </span>
+                  <span style={{
+                    width: '26px', height: '26px', borderRadius: '50%', flexShrink: 0,
+                    background: on ? c.color : 'rgba(255,255,255,0.07)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontSize: '10px', color: on ? 'white' : 'rgba(255,255,255,0.35)',
+                    transition: 'all 0.2s',
+                  }}>
+                    {on ? '■' : '▶'}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Play the room's live peak frequency */}
+          {peakHz > 0 && (
+            <button
+              onClick={() => toggle(peakHz)}
+              style={{
+                marginTop: '10px', width: '100%',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
+                background: playingHz === peakHz ? 'rgba(167,139,250,0.15)' : 'rgba(255,255,255,0.03)',
+                border: `1px solid ${playingHz === peakHz ? 'rgba(167,139,250,0.45)' : 'rgba(255,255,255,0.07)'}`,
+                borderRadius: '12px', padding: '12px', cursor: 'pointer',
+                color: playingHz === peakHz ? '#a78bfa' : 'rgba(255,255,255,0.35)',
+                fontSize: '13px', transition: 'all 0.2s',
+              }}
+            >
+              <span>{playingHz === peakHz ? '■ Stop' : '▶ Play room\'s dominant —'}</span>
+              <span style={{ fontWeight: '700', fontVariantNumeric: 'tabular-nums' }}>
+                {peakHz.toLocaleString()} Hz
+              </span>
+            </button>
+          )}
+        </div>
+      );
+    }
+
     // ─── Archetype Card ───────────────────────────────────────────────
     function ArchetypeCard({ archetype, bandEnergies }) {
       if (!archetype) return null;
@@ -1124,6 +1249,9 @@
           {isListening && chakraEnergies.length > 0 && (
             <ChakraPanel chakraEnergies={chakraEnergies} dominantChakra={dominantChakra} />
           )}
+
+          {/* Tone Player */}
+          <TonePlayer peakHz={peakHz} />
 
           {/* AI Narration */}
           <NarrationBox
