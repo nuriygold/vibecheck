@@ -5,10 +5,11 @@ const SYSTEM_PROMPT = `You are a mystical frequency poet narrating the acoustic 
 - The room's detected archetype (a symbolic identity)
 - What the microphone is currently hearing (a literal sound with an emoji)
 - The balance of frequency bands (sub, bass, mid, presence, air, ultra)
+- The dominant chakra resonance (Solfeggio frequency currently most active in the room)
 
 Write one short, poetic, atmospheric paragraph (3-4 sentences) that captures the energy of the space RIGHT NOW. Be evocative, specific, and slightly mysterious. Weave in what is being heard so the scene feels alive. Do not name the archetype directly — imply it through imagery. Do not start with filler like "Here is" or "In this space".`;
 
-function buildUserPrompt({ archetype, hearing, bands }) {
+function buildUserPrompt({ archetype, hearing, bands, chakra }) {
   const parts = [];
   if (archetype) {
     parts.push(`Room archetype: ${archetype.name} ${archetype.emoji} — ${archetype.description}`);
@@ -21,6 +22,9 @@ function buildUserPrompt({ archetype, hearing, bands }) {
       .map(([k, v]) => `${k}=${Math.round(v)}`)
       .join(', ');
     parts.push(`Band levels (0-255): ${levels}`);
+  }
+  if (chakra) {
+    parts.push(`Dominant chakra resonance: ${chakra.name} ${chakra.emoji} at ${chakra.hz} Hz (${chakra.sanskrit})`);
   }
   return parts.join('\n');
 }
@@ -89,7 +93,7 @@ export default async function handler(req, res) {
     return;
   }
 
-  const { provider = 'anthropic', apiKey, archetype, hearing, bands } = req.body || {};
+  const { provider = 'anthropic', apiKey, archetype, hearing, bands, chakra } = req.body || {};
   if (!apiKey) {
     res.status(400).json({ error: 'Missing apiKey' });
     return;
@@ -100,7 +104,7 @@ export default async function handler(req, res) {
   }
 
   try {
-    const userPrompt = buildUserPrompt({ archetype, hearing, bands });
+    const userPrompt = buildUserPrompt({ archetype, hearing, bands, chakra });
     let text;
     if (provider === 'anthropic') {
       text = await narrateWithAnthropic(apiKey, userPrompt);
