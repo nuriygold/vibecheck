@@ -350,6 +350,18 @@
         return CHAKRAS.map(c => ({ ...c, energy: this.getBandEnergy(c.hz - 20, c.hz + 20) }));
       }
 
+      getPeakFrequency() {
+        if (!this.analyser) return 0;
+        const nyq = this.ctx.sampleRate / 2;
+        const binCount = this.analyser.frequencyBinCount;
+        let maxVal = 0, maxIdx = 0;
+        for (let i = 3; i < binCount; i++) {  // skip DC + sub-20Hz noise bins
+          if (this.dataArray[i] > maxVal) { maxVal = this.dataArray[i]; maxIdx = i; }
+        }
+        if (maxVal < 8) return 0;  // silence
+        return Math.round((maxIdx / binCount) * nyq);
+      }
+
       stop() {
         if (this.source) this.source.disconnect();
         if (this.stream) this.stream.getTracks().forEach(t => t.stop());
@@ -645,6 +657,40 @@
       );
     }
 
+    // ─── Peak Frequency Meter ─────────────────────────────────────────
+    function PeakFrequencyMeter({ peakHz, isListening }) {
+      if (!isListening) return null;
+      return (
+        <div className="card" style={{
+          padding: '20px 28px',
+          marginBottom: '16px',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          gap: '24px',
+        }}>
+          <div>
+            <div style={{ fontSize: '11px', letterSpacing: '0.1em', color: 'rgba(255,255,255,0.3)', marginBottom: '4px' }}>
+              DOMINANT FREQUENCY
+            </div>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px' }}>
+              <span style={{
+                fontSize: '64px', fontWeight: '900', lineHeight: 1,
+                letterSpacing: '-0.03em', fontVariantNumeric: 'tabular-nums',
+                color: '#a78bfa',
+                textShadow: '0 0 30px rgba(167,139,250,0.4)',
+                transition: 'color 0.3s',
+              }}>
+                {peakHz > 0 ? peakHz.toLocaleString() : '—'}
+              </span>
+              <span style={{ fontSize: '20px', color: 'rgba(255,255,255,0.3)', fontWeight: '300' }}>Hz</span>
+            </div>
+          </div>
+          <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.15)', textAlign: 'right', lineHeight: '1.7' }}>
+            Peak bin<br />of live FFT<br />at {FFT_SIZE} points
+          </div>
+        </div>
+      );
+    }
+
     // ─── Floating Emojis (ambient background) ─────────────────────────
     function FloatingEmojis({ hearing, isListening }) {
       const [particles, setParticles] = useState([]);
@@ -785,6 +831,7 @@
       const [ultraEnergy, setUltraEnergy] = useState(0);
       const [chakraEnergies, setChakraEnergies] = useState([]);
       const [dominantChakra, setDominantChakra] = useState(null);
+      const [peakHz, setPeakHz] = useState(0);
       const [apiKey, setApiKey] = useState(() => {
         try { return localStorage.getItem('vibecheck.apiKey') || ''; } catch { return ''; }
       });
@@ -837,6 +884,7 @@
         setSpectrum(spec);
         setBandEnergies(bands);
         setUltraEnergy(ultra);
+        setPeakHz(engine.getPeakFrequency());
         // Smooth archetype detection via history
         const detected = detectArchetype(bands);
         archetypeHistoryRef.current.push(detected.id);
@@ -896,6 +944,7 @@
         setUltraEnergy(0);
         setChakraEnergies([]);
         setDominantChakra(null);
+        setPeakHz(0);
         archetypeHistoryRef.current = [];
         hearingHistoryRef.current = [];
         chakraHistoryRef.current = [];
@@ -978,6 +1027,9 @@
               <HearingDisplay hearing={hearing} isListening={isListening} />
             </div>
           )}
+
+          {/* Peak Hz readout */}
+          <PeakFrequencyMeter peakHz={peakHz} isListening={isListening} />
 
           {/* Archetype + Band grid */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
