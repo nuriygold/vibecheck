@@ -550,6 +550,98 @@
       );
     }
 
+    // ─── Archetype Guide Sidebar ──────────────────────────────────────
+    const ARCHETYPE_TRIGGERS = {
+      'humming-hive':  'Detected when mid-range frequencies dominate — the band where human voices, activity, and collective energy live (roughly 500–2000 Hz).',
+      'hissing-lab':   'Detected when the presence band leads — electronics, fluorescent lighting, and clinical machinery all peak here (4000–6000 Hz).',
+      'soft-field':    'Detected when bass dominates — heavy materials, upholstered rooms, and low rumble push energy into the 60–250 Hz range.',
+      'electric-pulse':'Detected when sub-bass leads — the 20–60 Hz range is the fingerprint of infrastructure: power hum, HVAC, and electrical grids.',
+      'resonant-cave': 'Detected when low-mid frequencies dominate — rooms with hard parallel walls naturally amplify the 250–500 Hz resonance band.',
+      'dead-chamber':  'The fallback when no band is clearly dominant — highly treated rooms, open outdoor spaces, or near-silence.',
+    };
+
+    function ArchetypeGuideSidebar({ open, onClose }) {
+      return (
+        <>
+          {/* Backdrop */}
+          {open && (
+            <div
+              onClick={onClose}
+              style={{
+                position: 'fixed', inset: 0, zIndex: 50,
+                background: 'rgba(0,0,0,0.55)',
+                backdropFilter: 'blur(4px)',
+              }}
+            />
+          )}
+
+          {/* Drawer */}
+          <div style={{
+            position: 'fixed', top: 0, right: 0, bottom: 0, zIndex: 51,
+            width: 'min(420px, 92vw)',
+            background: '#0d0b14',
+            borderLeft: '1px solid rgba(255,255,255,0.08)',
+            boxShadow: '-20px 0 60px rgba(0,0,0,0.6)',
+            transform: open ? 'translateX(0)' : 'translateX(100%)',
+            transition: 'transform 0.3s cubic-bezier(0.4,0,0.2,1)',
+            display: 'flex', flexDirection: 'column',
+            overflowY: 'auto',
+          }}>
+            {/* Header */}
+            <div style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              padding: '22px 24px 18px',
+              borderBottom: '1px solid rgba(255,255,255,0.06)',
+              position: 'sticky', top: 0,
+              background: '#0d0b14', zIndex: 1,
+            }}>
+              <div>
+                <div style={{ fontSize: '11px', letterSpacing: '0.15em', color: '#a78bfa', fontWeight: '700', marginBottom: '2px' }}>
+                  ROOM ARCHETYPE GUIDE
+                </div>
+                <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.25)' }}>
+                  6 acoustic identities · how each is detected
+                </div>
+              </div>
+              <button onClick={onClose} style={{
+                background: 'rgba(255,255,255,0.06)', border: 'none', borderRadius: '8px',
+                color: 'rgba(255,255,255,0.5)', cursor: 'pointer',
+                fontSize: '18px', width: '36px', height: '36px',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}>✕</button>
+            </div>
+
+            {/* Content */}
+            <div style={{ padding: '20px 24px', flex: 1 }}>
+              <p style={{ fontSize: '13px', color: 'rgba(255,255,255,0.3)', lineHeight: '1.7', marginBottom: '24px' }}>
+                Every room has a dominant frequency character. Vibe Check listens continuously and picks the archetype whose frequency signature best matches your space, smoothed over a 30-frame window for stability.
+              </p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+                {ARCHETYPES.map(a => (
+                  <div key={a.id} style={{ borderLeft: `3px solid ${a.color}55`, paddingLeft: '16px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
+                      <span style={{ fontSize: '26px' }}>{a.emoji}</span>
+                      <span style={{ fontWeight: '800', fontSize: '16px', color: a.color }}>{a.name}</span>
+                    </div>
+                    <p style={{ fontSize: '13px', color: 'rgba(255,255,255,0.6)', lineHeight: '1.65', marginBottom: '8px' }}>
+                      {a.description}
+                    </p>
+                    <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.35)', lineHeight: '1.6', marginBottom: '8px' }}>
+                      <span style={{ color: a.color, fontWeight: '600' }}>Detected when · </span>
+                      {ARCHETYPE_TRIGGERS[a.id]}
+                    </p>
+                    <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.25)', lineHeight: '1.6', fontStyle: 'italic' }}>
+                      {a.ritual}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </>
+      );
+    }
+
     // ─── Archetype Card ───────────────────────────────────────────────
     function ArchetypeCard({ archetype, bandEnergies }) {
       if (!archetype) return null;
@@ -883,6 +975,7 @@
       const [provider, setProvider] = useState(() => {
         try { return localStorage.getItem('vibecheck.provider') || 'anthropic'; } catch { return 'anthropic'; }
       });
+      const [guideOpen, setGuideOpen] = useState(false);
       const [error, setError] = useState('');
       const engineRef = useRef(null);
       const rafRef = useRef(null);
@@ -1006,6 +1099,7 @@
       return (
         <div style={{ maxWidth: '780px', margin: '0 auto', padding: '24px 16px', position: 'relative', zIndex: 1 }}>
           <FloatingEmojis hearing={hearing} isListening={isListening} />
+          <ArchetypeGuideSidebar open={guideOpen} onClose={() => setGuideOpen(false)} />
 
           {/* Header */}
           <div style={{ textAlign: 'center', marginBottom: '40px' }}>
@@ -1025,9 +1119,20 @@
             }}>
               Room Frequency<br />Tuner
             </h1>
-            <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '16px', maxWidth: '420px', margin: '0 auto' }}>
+            <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '16px', maxWidth: '420px', margin: '0 auto 12px' }}>
               What frequency is your space vibrating at? Let's find out.
             </p>
+            <button
+              onClick={() => setGuideOpen(true)}
+              style={{
+                background: 'none', border: 'none', cursor: 'pointer',
+                fontSize: '13px', color: 'rgba(167,139,250,0.6)',
+                textDecoration: 'underline', textUnderlineOffset: '3px',
+                letterSpacing: '0.02em',
+              }}
+            >
+              What are the archetypes? ›
+            </button>
           </div>
 
           {/* Spectrum Visualizer */}
