@@ -45,6 +45,40 @@
       0%, 100% { opacity: 0.4; transform: scale(1); }
       50% { opacity: 1; transform: scale(1.15); }
     }
+    @keyframes float-up {
+      0%   { transform: translate(0, 0) scale(0.7) rotate(0deg); opacity: 0; }
+      10%  { opacity: 0.7; }
+      80%  { opacity: 0.5; }
+      100% { transform: translate(var(--drift, 0), -110vh) scale(1.1) rotate(var(--spin, 20deg)); opacity: 0; }
+    }
+    @keyframes aurora-shift {
+      0%   { transform: translate(-10%, -10%) rotate(0deg); }
+      50%  { transform: translate(10%, 10%) rotate(180deg); }
+      100% { transform: translate(-10%, -10%) rotate(360deg); }
+    }
+    @keyframes hearing-pop {
+      0%   { transform: scale(0.6); opacity: 0; }
+      60%  { transform: scale(1.15); opacity: 1; }
+      100% { transform: scale(1); opacity: 1; }
+    }
+    .aurora {
+      position: fixed; inset: -20%; pointer-events: none; z-index: 0;
+      filter: blur(80px); opacity: 0.35;
+      background:
+        radial-gradient(circle at 30% 40%, var(--aurora-a, #7c3aed) 0%, transparent 40%),
+        radial-gradient(circle at 70% 60%, var(--aurora-b, #06b6d4) 0%, transparent 40%),
+        radial-gradient(circle at 50% 80%, var(--aurora-c, #f472b6) 0%, transparent 35%);
+      animation: aurora-shift 40s ease-in-out infinite;
+      transition: background 1.5s ease-out;
+    }
+    .floating-emoji {
+      position: fixed;
+      bottom: -60px;
+      pointer-events: none;
+      user-select: none;
+      will-change: transform, opacity;
+      z-index: 0;
+    }
     .spectrum-bar {
       transform-origin: bottom;
       transition: height 0.05s ease-out;
@@ -92,16 +126,34 @@
       outline: none;
       transition: border-color 0.2s;
     }
-    input[type="text"]:focus, input[type="password"]:focus {
+    input[type="text"]:focus, input[type="password"]:focus, select:focus {
       border-color: rgba(124,58,237,0.6);
     }
     input::placeholder { color: rgba(255,255,255,0.3); }
+    select {
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 10px;
+      color: #e2e8f0;
+      font-size: 14px;
+      padding: 10px 14px;
+      width: 100%;
+      outline: none;
+      transition: border-color 0.2s;
+      appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%23a78bfa' d='M6 8L0 0h12z'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 14px center;
+      padding-right: 36px;
+    }
+    select option { background: #1e1b2e; color: #e2e8f0; }
     ::-webkit-scrollbar { width: 6px; }
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: rgba(124,58,237,0.4); border-radius: 3px; }
   </style>
 </head>
 <body>
+  <div class="aurora" id="aurora"></div>
   <div class="noise"></div>
   <div id="root"></div>
 
@@ -123,6 +175,56 @@
       air:      [6000, 12000],
       ultra:    [12000, 20000],
     };
+
+    const PROVIDERS = [
+      { id: 'anthropic', label: 'Anthropic — Claude',    placeholder: 'sk-ant-... Anthropic key (stays local)' },
+      { id: 'openai',    label: 'OpenAI — GPT',          placeholder: 'sk-... OpenAI key (stays local)' },
+      { id: 'google',    label: 'Google — Gemini',       placeholder: 'AIza... Google AI key (stays local)' },
+    ];
+
+    // ─── Hearing Classifier ───────────────────────────────────────────
+    // Map live frequency band energies → a human word + emoji describing
+    // what the room is hearing right now.
+    const HEARINGS = {
+      stillness: { label: 'Stillness',  emoji: '🤫', color: '#64748b' },
+      whine:     { label: 'Whine',      emoji: '🔊', color: '#f97316' },
+      voices:    { label: 'Voices',     emoji: '🗣️', color: '#f472b6' },
+      rumble:    { label: 'Rumble',     emoji: '🌊', color: '#6366f1' },
+      thump:     { label: 'Thump',      emoji: '🥁', color: '#8b5cf6' },
+      sparkle:   { label: 'Sparkle',    emoji: '✨', color: '#facc15' },
+      clatter:   { label: 'Clatter',    emoji: '🪵', color: '#fb7185' },
+      hiss:      { label: 'Hiss',       emoji: '🌬️', color: '#06b6d4' },
+      hum:       { label: 'Hum',        emoji: '〰️', color: '#a78bfa' },
+      breath:    { label: 'Breath',     emoji: '🫧', color: '#94a3b8' },
+      chime:     { label: 'Chime',      emoji: '🔔', color: '#fcd34d' },
+      crackle:   { label: 'Crackle',    emoji: '⚡', color: '#fbbf24' },
+    };
+
+    function classifyHearing(bands, ultra) {
+      const sub = bands.sub || 0, bass = bands.bass || 0;
+      const lowMid = bands.lowMid || 0, mid = bands.mid || 0;
+      const highMid = bands.highMid || 0, presence = bands.presence || 0;
+      const air = bands.air || 0;
+      const total = sub + bass + lowMid + mid + highMid + presence + air;
+
+      if (total < 70) return HEARINGS.stillness;
+      if (ultra > 28) return HEARINGS.whine;
+
+      const voiceEnergy = (mid + highMid) / 2;
+      if (voiceEnergy > 48 && mid > bass * 0.9) return HEARINGS.voices;
+
+      if (sub > 45 && sub >= bass) return HEARINGS.rumble;
+      if (bass > 50 && bass > mid) return HEARINGS.thump;
+
+      if (air > 42 && air > mid) return HEARINGS.sparkle;
+      if (presence > 42 && highMid > 38) return HEARINGS.chime;
+      if (highMid > 45 && presence > 35) return HEARINGS.clatter;
+      if (presence > 40 && presence > bass) return HEARINGS.hiss;
+      if (air > 35 && presence < 25) return HEARINGS.crackle;
+
+      if (Math.min(bass, mid, highMid) > 22) return HEARINGS.hum;
+      return HEARINGS.breath;
+    }
 
     const ARCHETYPES = [
       {
@@ -416,38 +518,117 @@
       );
     }
 
+    // ─── Hearing Display ──────────────────────────────────────────────
+    function HearingDisplay({ hearing, isListening }) {
+      if (!isListening || !hearing) return null;
+      return (
+        <div className="card" style={{
+          padding: '18px 22px',
+          borderColor: `${hearing.color}40`,
+          display: 'flex', alignItems: 'center', gap: '16px',
+          background: `linear-gradient(135deg, ${hearing.color}18, rgba(255,255,255,0.03))`,
+        }}>
+          <div
+            key={hearing.label}
+            style={{
+              fontSize: '44px',
+              animation: 'hearing-pop 0.4s ease-out',
+              filter: `drop-shadow(0 0 18px ${hearing.color}aa)`,
+            }}
+          >
+            {hearing.emoji}
+          </div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: '11px', letterSpacing: '0.15em', color: 'rgba(255,255,255,0.4)', marginBottom: '4px' }}>
+              HEARING RIGHT NOW
+            </div>
+            <div style={{ fontSize: '24px', fontWeight: '800', color: hearing.color }}>
+              {hearing.label}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ─── Floating Emojis (ambient background) ─────────────────────────
+    function FloatingEmojis({ hearing, isListening }) {
+      const [particles, setParticles] = useState([]);
+      const idRef = useRef(0);
+
+      useEffect(() => {
+        if (!isListening || !hearing || hearing.label === 'Stillness') return;
+        const interval = setInterval(() => {
+          setParticles(prev => {
+            const now = Date.now();
+            const active = prev.filter(p => now - p.born < p.duration * 1000 + 200);
+            if (active.length > 28) active.splice(0, active.length - 28);
+            active.push({
+              id: idRef.current++,
+              emoji: hearing.emoji,
+              color: hearing.color,
+              x: Math.random() * 100,
+              drift: `${(Math.random() - 0.5) * 30}vw`,
+              spin: `${(Math.random() - 0.5) * 90}deg`,
+              size: 22 + Math.random() * 36,
+              duration: 7 + Math.random() * 5,
+              born: now,
+            });
+            return active;
+          });
+        }, 650);
+        return () => clearInterval(interval);
+      }, [isListening, hearing]);
+
+      // Clear particles when listening stops
+      useEffect(() => {
+        if (!isListening) setParticles([]);
+      }, [isListening]);
+
+      return (
+        <>
+          {particles.map(p => (
+            <span
+              key={p.id}
+              className="floating-emoji"
+              style={{
+                left: `${p.x}%`,
+                fontSize: `${p.size}px`,
+                animation: `float-up ${p.duration}s linear forwards`,
+                filter: `drop-shadow(0 0 14px ${p.color}aa)`,
+                '--drift': p.drift,
+                '--spin': p.spin,
+              }}
+            >
+              {p.emoji}
+            </span>
+          ))}
+        </>
+      );
+    }
+
     // ─── Narration Box ────────────────────────────────────────────────
-    function NarrationBox({ archetype, apiKey, onApiKeyChange }) {
+    function NarrationBox({ archetype, hearing, bandEnergies, apiKey, onApiKeyChange, provider, onProviderChange }) {
       const [narration, setNarration] = useState('');
       const [loading, setLoading] = useState(false);
       const [error, setError] = useState('');
 
+      const providerDef = PROVIDERS.find(p => p.id === provider) || PROVIDERS[0];
+
       const fetchNarration = async () => {
-        if (!apiKey) { setError('Enter your Anthropic API key above to unlock narration.'); return; }
+        if (!apiKey) { setError('Enter your API key above to unlock narration.'); return; }
         if (!archetype) { setError('Start listening first to detect a room archetype.'); return; }
         setLoading(true); setError(''); setNarration('');
         try {
-          const res = await fetch('https://api.anthropic.com/v1/messages', {
+          const res = await fetch('/api/narrate', {
             method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'x-api-key': apiKey,
-              'anthropic-version': '2023-06-01',
-            },
-            body: JSON.stringify({
-              model: 'claude-3-haiku-20240307',
-              max_tokens: 200,
-              messages: [{
-                role: 'user',
-                content: `You are a mystical frequency poet. The room has been analyzed and its archetype is "${archetype.name}" — ${archetype.description} Write one short, poetic, atmospheric paragraph (3-4 sentences) describing the spiritual and energetic quality of this space right now. Be evocative, specific, and slightly mysterious. Do not use the archetype name directly.`,
-              }],
-            }),
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ provider, apiKey, archetype, hearing, bands: bandEnergies }),
           });
-          if (!res.ok) throw new Error(`API error ${res.status}`);
-          const data = await res.json();
-          setNarration(data.content?.[0]?.text || '');
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(data.error || `API error ${res.status}`);
+          setNarration(data.text || '(empty response)');
         } catch (e) {
-          setError(`Could not reach Claude API. This may require a CORS-enabled proxy in production. Error: ${e.message}`);
+          setError(e.message);
         }
         setLoading(false);
       };
@@ -455,12 +636,17 @@
       return (
         <div className="card" style={{ padding: '20px' }}>
           <div style={{ fontSize: '11px', letterSpacing: '0.1em', color: '#a78bfa', fontWeight: '700', marginBottom: '12px' }}>
-            CLAUDE NARRATION
+            AI NARRATION
           </div>
-          <div style={{ marginBottom: '12px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '180px 1fr', gap: '10px', marginBottom: '12px' }}>
+            <select value={provider} onChange={e => onProviderChange(e.target.value)}>
+              {PROVIDERS.map(p => (
+                <option key={p.id} value={p.id}>{p.label}</option>
+              ))}
+            </select>
             <input
               type="password"
-              placeholder="sk-ant-... Anthropic API key (stays local)"
+              placeholder={providerDef.placeholder}
               value={apiKey}
               onChange={e => onApiKeyChange(e.target.value)}
             />
@@ -476,12 +662,13 @@
           {narration && (
             <p style={{
               marginTop: '16px',
-              color: 'rgba(255,255,255,0.8)',
+              color: 'rgba(255,255,255,0.85)',
               lineHeight: '1.7',
               fontSize: '15px',
               fontStyle: 'italic',
               borderLeft: '2px solid rgba(167,139,250,0.4)',
               paddingLeft: '14px',
+              whiteSpace: 'pre-wrap',
             }}>
               {narration}
             </p>
@@ -499,12 +686,42 @@
       const [spectrum, setSpectrum] = useState(null);
       const [bandEnergies, setBandEnergies] = useState({});
       const [archetype, setArchetype] = useState(null);
+      const [hearing, setHearing] = useState(null);
       const [ultraEnergy, setUltraEnergy] = useState(0);
-      const [apiKey, setApiKey] = useState('');
+      const [apiKey, setApiKey] = useState(() => {
+        try { return localStorage.getItem('vibecheck.apiKey') || ''; } catch { return ''; }
+      });
+      const [provider, setProvider] = useState(() => {
+        try { return localStorage.getItem('vibecheck.provider') || 'anthropic'; } catch { return 'anthropic'; }
+      });
       const [error, setError] = useState('');
       const engineRef = useRef(null);
       const rafRef = useRef(null);
       const archetypeHistoryRef = useRef([]);
+      const hearingHistoryRef = useRef([]);
+
+      // Persist key + provider choice locally.
+      useEffect(() => {
+        try { localStorage.setItem('vibecheck.apiKey', apiKey); } catch {}
+      }, [apiKey]);
+      useEffect(() => {
+        try { localStorage.setItem('vibecheck.provider', provider); } catch {}
+      }, [provider]);
+
+      // Repaint aurora as the hearing color shifts.
+      useEffect(() => {
+        const el = document.getElementById('aurora');
+        if (!el) return;
+        if (hearing && isListening) {
+          el.style.setProperty('--aurora-a', hearing.color);
+          el.style.setProperty('--aurora-b', archetype?.color || '#06b6d4');
+          el.style.setProperty('--aurora-c', archetype?.glow || '#f472b6');
+        } else {
+          el.style.removeProperty('--aurora-a');
+          el.style.removeProperty('--aurora-b');
+          el.style.removeProperty('--aurora-c');
+        }
+      }, [hearing, archetype, isListening]);
 
       const detectArchetype = useCallback((bands) => {
         for (const a of ARCHETYPES) {
@@ -531,6 +748,16 @@
         const dominantId = Object.entries(counts).sort((a, b) => b[1] - a[1])[0]?.[0];
         const stable = ARCHETYPES.find(a => a.id === dominantId) || detected;
         setArchetype(stable);
+
+        // Classify what's being heard right now, smoothed over ~0.5s.
+        const heardNow = classifyHearing(bands, ultra);
+        hearingHistoryRef.current.push(heardNow.label);
+        if (hearingHistoryRef.current.length > 15) hearingHistoryRef.current.shift();
+        const hCounts = {};
+        hearingHistoryRef.current.forEach(l => { hCounts[l] = (hCounts[l] || 0) + 1; });
+        const dominantLabel = Object.entries(hCounts).sort((a, b) => b[1] - a[1])[0]?.[0];
+        const stableHearing = Object.values(HEARINGS).find(h => h.label === dominantLabel) || heardNow;
+        setHearing(stableHearing);
         rafRef.current = requestAnimationFrame(tick);
       }, [detectArchetype]);
 
@@ -555,8 +782,10 @@
         setSpectrum(null);
         setBandEnergies({});
         setArchetype(null);
+        setHearing(null);
         setUltraEnergy(0);
         archetypeHistoryRef.current = [];
+        hearingHistoryRef.current = [];
       };
 
       useEffect(() => () => { stopListening(); }, []);
@@ -569,6 +798,8 @@
 
       return (
         <div style={{ maxWidth: '780px', margin: '0 auto', padding: '24px 16px', position: 'relative', zIndex: 1 }}>
+          <FloatingEmojis hearing={hearing} isListening={isListening} />
+
           {/* Header */}
           <div style={{ textAlign: 'center', marginBottom: '40px' }}>
             <div style={{ fontSize: '13px', letterSpacing: '0.3em', color: 'rgba(255,255,255,0.3)', marginBottom: '12px' }}>
@@ -628,6 +859,13 @@
             )}
           </div>
 
+          {/* Hearing display */}
+          {isListening && hearing && (
+            <div style={{ marginBottom: '16px' }}>
+              <HearingDisplay hearing={hearing} isListening={isListening} />
+            </div>
+          )}
+
           {/* Archetype + Band grid */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
             <div style={{ gridColumn: '1 / -1' }}>
@@ -672,16 +910,20 @@
             </div>
           </div>
 
-          {/* Claude Narration */}
+          {/* AI Narration */}
           <NarrationBox
             archetype={archetype}
+            hearing={hearing}
+            bandEnergies={bandEnergies}
             apiKey={apiKey}
             onApiKeyChange={setApiKey}
+            provider={provider}
+            onProviderChange={setProvider}
           />
 
           {/* Footer */}
           <div style={{ textAlign: 'center', marginTop: '40px', color: 'rgba(255,255,255,0.15)', fontSize: '12px' }}>
-            Built for Vibe&lt;ATL&gt; 2026 · Web Audio API · No backend · No tracking
+            Built for Vibe&lt;ATL&gt; 2026 · Web Audio API · Bring your own AI key · No tracking
           </div>
         </div>
       );
