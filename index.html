@@ -350,6 +350,18 @@
         return CHAKRAS.map(c => ({ ...c, energy: this.getBandEnergy(c.hz - 20, c.hz + 20) }));
       }
 
+      getPeakFrequency() {
+        if (!this.analyser) return 0;
+        const nyq = this.ctx.sampleRate / 2;
+        const binCount = this.analyser.frequencyBinCount;
+        let maxVal = 0, maxIdx = 0;
+        for (let i = 3; i < binCount; i++) {  // skip DC + sub-20Hz noise bins
+          if (this.dataArray[i] > maxVal) { maxVal = this.dataArray[i]; maxIdx = i; }
+        }
+        if (maxVal < 8) return 0;  // silence
+        return Math.round((maxIdx / binCount) * nyq);
+      }
+
       stop() {
         if (this.source) this.source.disconnect();
         if (this.stream) this.stream.getTracks().forEach(t => t.stop());
@@ -645,6 +657,40 @@
       );
     }
 
+    // ─── Peak Frequency Meter ─────────────────────────────────────────
+    function PeakFrequencyMeter({ peakHz, isListening }) {
+      if (!isListening) return null;
+      return (
+        <div className="card" style={{
+          padding: '20px 28px',
+          marginBottom: '16px',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          gap: '24px',
+        }}>
+          <div>
+            <div style={{ fontSize: '11px', letterSpacing: '0.1em', color: 'rgba(255,255,255,0.3)', marginBottom: '4px' }}>
+              DOMINANT FREQUENCY
+            </div>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px' }}>
+              <span style={{
+                fontSize: '64px', fontWeight: '900', lineHeight: 1,
+                letterSpacing: '-0.03em', fontVariantNumeric: 'tabular-nums',
+                color: '#a78bfa',
+                textShadow: '0 0 30px rgba(167,139,250,0.4)',
+                transition: 'color 0.3s',
+              }}>
+                {peakHz > 0 ? peakHz.toLocaleString() : '—'}
+              </span>
+              <span style={{ fontSize: '20px', color: 'rgba(255,255,255,0.3)', fontWeight: '300' }}>Hz</span>
+            </div>
+          </div>
+          <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.15)', textAlign: 'right', lineHeight: '1.7' }}>
+            Peak bin<br />of live FFT<br />at {FFT_SIZE} points
+          </div>
+        </div>
+      );
+    }
+
     // ─── Floating Emojis (ambient background) ─────────────────────────
     function FloatingEmojis({ hearing, isListening }) {
       const [particles, setParticles] = useState([]);
@@ -702,30 +748,43 @@
     }
 
     // ─── Narration Box ────────────────────────────────────────────────
+    const NARRATION_MODES = [
+      { id: 'literal',     label: 'Put words to exactly what I\'m hearing', icon: '👂' },
+      { id: 'romanticize', label: 'Romanticize what I\'m hearing',           icon: '✦'  },
+      { id: 'scientific',  label: 'Scientific explanation',                  icon: '🔬' },
+      { id: 'suggest',     label: 'Suggest for my goal',                    icon: '🎯' },
+    ];
+
     function NarrationBox({ archetype, hearing, bandEnergies, dominantChakra, apiKey, onApiKeyChange, provider, onProviderChange }) {
       const [narration, setNarration] = useState('');
       const [loading, setLoading] = useState(false);
+      const [activeMode, setActiveMode] = useState('');
+      const [resultMode, setResultMode] = useState('');
+      const [userGoal, setUserGoal] = useState('');
       const [error, setError] = useState('');
 
       const providerDef = PROVIDERS.find(p => p.id === provider) || PROVIDERS[0];
 
-      const fetchNarration = async () => {
+      const fetchNarration = async (mode) => {
         if (!apiKey) { setError('Enter your API key above to unlock narration.'); return; }
         if (!archetype) { setError('Start listening first to detect a room archetype.'); return; }
-        setLoading(true); setError(''); setNarration('');
+        if (mode === 'suggest' && !userGoal.trim()) { setError('Describe what you want to feel or achieve first.'); return; }
+        setLoading(true); setActiveMode(mode); setError(''); setNarration('');
         try {
           const res = await fetch('/api/narrate', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ provider, apiKey, archetype, hearing, bands: bandEnergies, chakra: dominantChakra }),
+            body: JSON.stringify({ provider, apiKey, archetype, hearing, bands: bandEnergies, chakra: dominantChakra, mode, userGoal }),
           });
           const data = await res.json().catch(() => ({}));
           if (!res.ok) throw new Error(data.error || `API error ${res.status}`);
           setNarration(data.text || '(empty response)');
+          setResultMode(mode);
         } catch (e) {
           setError(e.message);
         }
         setLoading(false);
+        setActiveMode('');
       };
 
       return (
@@ -733,11 +792,11 @@
           <div style={{ fontSize: '11px', letterSpacing: '0.1em', color: '#a78bfa', fontWeight: '700', marginBottom: '12px' }}>
             AI NARRATION
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '180px 1fr', gap: '10px', marginBottom: '12px' }}>
+
+          {/* Provider + key */}
+          <div style={{ display: 'grid', gridTemplateColumns: '180px 1fr', gap: '10px', marginBottom: '14px' }}>
             <select value={provider} onChange={e => onProviderChange(e.target.value)}>
-              {PROVIDERS.map(p => (
-                <option key={p.id} value={p.id}>{p.label}</option>
-              ))}
+              {PROVIDERS.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
             </select>
             <input
               type="password"
@@ -746,27 +805,59 @@
               onChange={e => onApiKeyChange(e.target.value)}
             />
           </div>
-          <button
-            className="btn-primary"
-            onClick={fetchNarration}
-            disabled={loading}
-            style={{ width: '100%', opacity: loading ? 0.7 : 1 }}
-          >
-            {loading ? '✦ Reading the room...' : '✦ Narrate this space'}
-          </button>
+
+          {/* 4 mode buttons */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '10px' }}>
+            {NARRATION_MODES.map(m => {
+              const isActive = activeMode === m.id;
+              return (
+                <button
+                  key={m.id}
+                  className="btn-primary"
+                  onClick={() => fetchNarration(m.id)}
+                  disabled={loading}
+                  style={{
+                    fontSize: '13px', padding: '12px 14px', textAlign: 'left',
+                    opacity: loading && !isActive ? 0.45 : 1,
+                    background: isActive
+                      ? 'linear-gradient(135deg, #4f46e5, #7c3aed)'
+                      : 'linear-gradient(135deg, rgba(124,58,237,0.25), rgba(79,70,229,0.25))',
+                    border: '1px solid rgba(124,58,237,0.45)',
+                  }}
+                >
+                  <span style={{ marginRight: '6px' }}>{m.icon}</span>
+                  {isActive ? 'Reading the room…' : m.label}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Goal input — used by the Suggest button */}
+          <input
+            type="text"
+            placeholder="What do you want to feel or achieve? (for Suggest)"
+            value={userGoal}
+            onChange={e => setUserGoal(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && fetchNarration('suggest')}
+          />
+
+          {/* Result */}
           {narration && (
-            <p style={{
-              marginTop: '16px',
-              color: 'rgba(255,255,255,0.85)',
-              lineHeight: '1.7',
-              fontSize: '15px',
-              fontStyle: 'italic',
-              borderLeft: '2px solid rgba(167,139,250,0.4)',
-              paddingLeft: '14px',
-              whiteSpace: 'pre-wrap',
-            }}>
-              {narration}
-            </p>
+            <div style={{ marginTop: '16px' }}>
+              {resultMode && (
+                <div style={{ fontSize: '10px', letterSpacing: '0.1em', color: 'rgba(255,255,255,0.22)', marginBottom: '8px' }}>
+                  {NARRATION_MODES.find(m => m.id === resultMode)?.label.toUpperCase()}
+                </div>
+              )}
+              <p style={{
+                color: 'rgba(255,255,255,0.85)', lineHeight: '1.7', fontSize: '15px',
+                fontStyle: resultMode === 'romanticize' ? 'italic' : 'normal',
+                borderLeft: '2px solid rgba(167,139,250,0.4)',
+                paddingLeft: '14px', whiteSpace: 'pre-wrap',
+              }}>
+                {narration}
+              </p>
+            </div>
           )}
           {error && (
             <p style={{ marginTop: '12px', color: '#f87171', fontSize: '13px' }}>{error}</p>
@@ -785,6 +876,7 @@
       const [ultraEnergy, setUltraEnergy] = useState(0);
       const [chakraEnergies, setChakraEnergies] = useState([]);
       const [dominantChakra, setDominantChakra] = useState(null);
+      const [peakHz, setPeakHz] = useState(0);
       const [apiKey, setApiKey] = useState(() => {
         try { return localStorage.getItem('vibecheck.apiKey') || ''; } catch { return ''; }
       });
@@ -837,6 +929,7 @@
         setSpectrum(spec);
         setBandEnergies(bands);
         setUltraEnergy(ultra);
+        setPeakHz(engine.getPeakFrequency());
         // Smooth archetype detection via history
         const detected = detectArchetype(bands);
         archetypeHistoryRef.current.push(detected.id);
@@ -896,6 +989,7 @@
         setUltraEnergy(0);
         setChakraEnergies([]);
         setDominantChakra(null);
+        setPeakHz(0);
         archetypeHistoryRef.current = [];
         hearingHistoryRef.current = [];
         chakraHistoryRef.current = [];
@@ -978,6 +1072,9 @@
               <HearingDisplay hearing={hearing} isListening={isListening} />
             </div>
           )}
+
+          {/* Peak Hz readout */}
+          <PeakFrequencyMeter peakHz={peakHz} isListening={isListening} />
 
           {/* Archetype + Band grid */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
