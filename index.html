@@ -176,6 +176,16 @@
       ultra:    [12000, 20000],
     };
 
+    const CHAKRAS = [
+      { id: 'crown',    name: 'Crown',     hz: 963, color: '#a855f7', emoji: '👑', sanskrit: 'Sahasrara'    },
+      { id: 'thirdEye', name: 'Third Eye', hz: 852, color: '#6366f1', emoji: '👁️', sanskrit: 'Ajna'         },
+      { id: 'throat',   name: 'Throat',    hz: 741, color: '#06b6d4', emoji: '💎', sanskrit: 'Vishuddha'    },
+      { id: 'heart',    name: 'Heart',     hz: 639, color: '#22c55e', emoji: '💚', sanskrit: 'Anahata'      },
+      { id: 'solar',    name: 'Solar',     hz: 528, color: '#eab308', emoji: '☀️', sanskrit: 'Manipura'     },
+      { id: 'sacral',   name: 'Sacral',    hz: 417, color: '#f97316', emoji: '🌊', sanskrit: 'Svadhisthana' },
+      { id: 'root',     name: 'Root',      hz: 396, color: '#ef4444', emoji: '🌍', sanskrit: 'Muladhara'    },
+    ];
+
     const PROVIDERS = [
       { id: 'anthropic', label: 'Anthropic — Claude',    placeholder: 'sk-ant-... Anthropic key (stays local)' },
       { id: 'openai',    label: 'OpenAI — GPT',          placeholder: 'sk-... OpenAI key (stays local)' },
@@ -336,6 +346,10 @@
         );
       }
 
+      getChakraEnergies() {
+        return CHAKRAS.map(c => ({ ...c, energy: this.getBandEnergy(c.hz - 20, c.hz + 20) }));
+      }
+
       stop() {
         if (this.source) this.source.disconnect();
         if (this.stream) this.stream.getTracks().forEach(t => t.stop());
@@ -439,6 +453,87 @@
               ? 'Ultrasonic energy present — pest repellers, CRT monitors, or electronics nearby'
               : 'No significant ultrasonic activity detected'}
           </div>
+        </div>
+      );
+    }
+
+    // ─── Chakra Resonance Panel ───────────────────────────────────────
+    function ChakraPanel({ chakraEnergies, dominantChakra }) {
+      if (!chakraEnergies || chakraEnergies.length === 0) return null;
+      return (
+        <div className="card" style={{ padding: '20px', marginBottom: '16px' }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', marginBottom: '16px' }}>
+            <div style={{ fontSize: '11px', letterSpacing: '0.1em', color: '#a78bfa', fontWeight: '700' }}>
+              CHAKRA RESONANCE
+            </div>
+            <div style={{ fontSize: '10px', color: 'rgba(255,255,255,0.2)', letterSpacing: '0.05em' }}>
+              Solfeggio frequencies · ±20 Hz bands
+            </div>
+          </div>
+          {chakraEnergies.map(c => {
+            const pct = Math.min(100, (c.energy / 128) * 100);
+            const isDominant = dominantChakra?.id === c.id;
+            return (
+              <div key={c.id} style={{
+                display: 'flex', alignItems: 'center', gap: '8px',
+                padding: isDominant ? '7px 10px' : '5px 2px',
+                marginBottom: '4px',
+                borderRadius: '10px',
+                background: isDominant ? `${c.color}15` : 'transparent',
+                border: isDominant ? `1px solid ${c.color}35` : '1px solid transparent',
+                transition: 'all 0.4s ease-out',
+              }}>
+                <span style={{ fontSize: '15px', width: '22px', textAlign: 'center' }}>{c.emoji}</span>
+                <span style={{
+                  fontSize: '12px', fontWeight: isDominant ? '700' : '400',
+                  color: isDominant ? c.color : 'rgba(255,255,255,0.5)',
+                  width: '74px', flexShrink: 0,
+                  transition: 'color 0.3s',
+                }}>{c.name}</span>
+                <span style={{
+                  fontSize: '10px', color: 'rgba(255,255,255,0.2)',
+                  width: '44px', flexShrink: 0, fontVariantNumeric: 'tabular-nums',
+                }}>{c.hz} Hz</span>
+                <div style={{
+                  flex: 1, height: isDominant ? '8px' : '5px',
+                  background: 'rgba(255,255,255,0.07)', borderRadius: '4px', overflow: 'hidden',
+                  transition: 'height 0.3s',
+                }}>
+                  <div style={{
+                    height: '100%', width: `${pct}%`,
+                    background: isDominant
+                      ? `linear-gradient(90deg, ${c.color}99, ${c.color})`
+                      : `${c.color}66`,
+                    borderRadius: '4px',
+                    boxShadow: isDominant ? `0 0 10px ${c.color}55` : 'none',
+                    transition: 'width 0.08s ease-out, box-shadow 0.3s',
+                  }} />
+                </div>
+                <span style={{
+                  fontSize: '11px', width: '30px', textAlign: 'right',
+                  color: isDominant ? c.color : 'rgba(255,255,255,0.2)',
+                  fontVariantNumeric: 'tabular-nums', transition: 'color 0.3s',
+                }}>{Math.round(pct)}%</span>
+              </div>
+            );
+          })}
+          {dominantChakra && (
+            <div style={{
+              marginTop: '10px', paddingTop: '10px',
+              borderTop: '1px solid rgba(255,255,255,0.06)',
+              fontSize: '12px', textAlign: 'center',
+              color: 'rgba(255,255,255,0.3)',
+            }}>
+              Active:&nbsp;
+              <span style={{ color: dominantChakra.color, fontWeight: '700' }}>
+                {dominantChakra.name} {dominantChakra.emoji}
+              </span>
+              &nbsp;·&nbsp;
+              <span style={{ color: 'rgba(255,255,255,0.25)' }}>
+                {dominantChakra.hz} Hz · {dominantChakra.sanskrit}
+              </span>
+            </div>
+          )}
         </div>
       );
     }
@@ -607,7 +702,7 @@
     }
 
     // ─── Narration Box ────────────────────────────────────────────────
-    function NarrationBox({ archetype, hearing, bandEnergies, apiKey, onApiKeyChange, provider, onProviderChange }) {
+    function NarrationBox({ archetype, hearing, bandEnergies, dominantChakra, apiKey, onApiKeyChange, provider, onProviderChange }) {
       const [narration, setNarration] = useState('');
       const [loading, setLoading] = useState(false);
       const [error, setError] = useState('');
@@ -622,7 +717,7 @@
           const res = await fetch('/api/narrate', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ provider, apiKey, archetype, hearing, bands: bandEnergies }),
+            body: JSON.stringify({ provider, apiKey, archetype, hearing, bands: bandEnergies, chakra: dominantChakra }),
           });
           const data = await res.json().catch(() => ({}));
           if (!res.ok) throw new Error(data.error || `API error ${res.status}`);
@@ -688,6 +783,8 @@
       const [archetype, setArchetype] = useState(null);
       const [hearing, setHearing] = useState(null);
       const [ultraEnergy, setUltraEnergy] = useState(0);
+      const [chakraEnergies, setChakraEnergies] = useState([]);
+      const [dominantChakra, setDominantChakra] = useState(null);
       const [apiKey, setApiKey] = useState(() => {
         try { return localStorage.getItem('vibecheck.apiKey') || ''; } catch { return ''; }
       });
@@ -699,6 +796,7 @@
       const rafRef = useRef(null);
       const archetypeHistoryRef = useRef([]);
       const hearingHistoryRef = useRef([]);
+      const chakraHistoryRef = useRef([]);
 
       // Persist key + provider choice locally.
       useEffect(() => {
@@ -758,6 +856,18 @@
         const dominantLabel = Object.entries(hCounts).sort((a, b) => b[1] - a[1])[0]?.[0];
         const stableHearing = Object.values(HEARINGS).find(h => h.label === dominantLabel) || heardNow;
         setHearing(stableHearing);
+
+        // Chakra resonance — narrow-band Solfeggio analysis
+        const chakras = engine.getChakraEnergies();
+        setChakraEnergies(chakras);
+        const maxChakra = chakras.reduce((a, b) => b.energy > a.energy ? b : a, chakras[0]);
+        chakraHistoryRef.current.push(maxChakra.id);
+        if (chakraHistoryRef.current.length > 15) chakraHistoryRef.current.shift();
+        const cCounts = {};
+        chakraHistoryRef.current.forEach(id => { cCounts[id] = (cCounts[id] || 0) + 1; });
+        const dominantChakraId = Object.entries(cCounts).sort((a, b) => b[1] - a[1])[0]?.[0];
+        setDominantChakra(CHAKRAS.find(c => c.id === dominantChakraId) || maxChakra);
+
         rafRef.current = requestAnimationFrame(tick);
       }, [detectArchetype]);
 
@@ -784,8 +894,11 @@
         setArchetype(null);
         setHearing(null);
         setUltraEnergy(0);
+        setChakraEnergies([]);
+        setDominantChakra(null);
         archetypeHistoryRef.current = [];
         hearingHistoryRef.current = [];
+        chakraHistoryRef.current = [];
       };
 
       useEffect(() => () => { stopListening(); }, []);
@@ -910,11 +1023,17 @@
             </div>
           </div>
 
+          {/* Chakra Resonance */}
+          {isListening && chakraEnergies.length > 0 && (
+            <ChakraPanel chakraEnergies={chakraEnergies} dominantChakra={dominantChakra} />
+          )}
+
           {/* AI Narration */}
           <NarrationBox
             archetype={archetype}
             hearing={hearing}
             bandEnergies={bandEnergies}
+            dominantChakra={dominantChakra}
             apiKey={apiKey}
             onApiKeyChange={setApiKey}
             provider={provider}
